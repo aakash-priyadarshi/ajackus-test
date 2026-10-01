@@ -7,8 +7,15 @@ from app.models import Member, MemberAttribute
 
 
 def build_member_profile_text(member: Member, db: Session) -> str:
-    attrs = db.query(MemberAttribute).filter(MemberAttribute.member_id == member.id).all()
-    # NOTE: this joins every attribute regardless of its `restricted` flag.
+    attrs = (
+        db.query(MemberAttribute)
+        .filter(
+            MemberAttribute.member_id == member.id,
+            MemberAttribute.club_id == member.club_id,
+            MemberAttribute.restricted.is_(False),
+        )
+        .all()
+    )
     return " | ".join(a.text for a in attrs)
 
 
@@ -28,14 +35,15 @@ def rank_candidates(member: Member, reason: str, db: Session) -> list[dict]:
         .all()
     )
 
+    query_vec = embedding_client.embed(build_member_profile_text(member, db))
     results = []
     for candidate in candidates:
-        # Recomputes the requesting member's own embedding on every iteration
-        # via embedding_client.embed(), instead of once before the loop.
-        query_vec = embedding_client.embed(build_member_profile_text(member, db))
-        candidate_vec = candidate.profile_embedding
-        if candidate_vec is None:
+        # Rebuild from the restricted-filtered attributes so an old stored
+        # embedding cannot carry sensitive text into a ranking decision.
+        candidate_text = build_member_profile_text(candidate, db)
+        if not candidate_text:
             continue
+        candidate_vec = embedding_client.embed(candidate_text)
         score = cosine_similarity(query_vec, [float(v) for v in candidate_vec])
         results.append({"member_id": candidate.id, "name": candidate.name, "score": round(float(score), 4)})
 
