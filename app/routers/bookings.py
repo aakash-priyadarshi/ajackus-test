@@ -3,9 +3,10 @@ from sqlalchemy.orm import Session
 
 from app.auth import get_current_member
 from app.db import get_db
-from app.models import Booking, Member, PaymentAttempt
+from app.models import Booking, Member
 from app.schemas import ConfirmPaymentIn
-from app.services.payment_mock import PaymentTimeoutError, payment_mock_client
+from app.services.payment_mock import PaymentTimeoutError
+from app.services.payments import confirm_booking_payment
 
 router = APIRouter(prefix="/bookings", tags=["bookings"])
 
@@ -26,18 +27,6 @@ def confirm_payment(
         raise HTTPException(status_code=404, detail="booking not found")
 
     try:
-        result = payment_mock_client.charge(payload.amount_cents)
+        return confirm_booking_payment(booking.id, payload.amount_cents, db)
     except PaymentTimeoutError:
         raise HTTPException(status_code=504, detail="payment provider timed out")
-
-    attempt = PaymentAttempt(
-        booking_id=booking.id,
-        amount_cents=payload.amount_cents,
-        status=result.status,
-    )
-    db.add(attempt)
-    if result.status == "succeeded":
-        booking.status = "confirmed"
-    db.commit()
-
-    return {"status": result.status, "attempt_id": attempt.id, "booking_status": booking.status}

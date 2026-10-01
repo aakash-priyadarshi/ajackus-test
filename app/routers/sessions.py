@@ -4,8 +4,10 @@ from sqlalchemy.orm import Session
 from app.auth import get_current_member, require_admin
 from app.db import get_db
 from app.models import ConversationSession, Member
-from app.services.payment_mock import payment_mock_client
-from app.services.session_flow import SimulatedCrash, advance_turn
+from app.schemas import SessionTurnIn
+from app.services.payment_mock import PaymentTimeoutError, payment_mock_client
+from app.services.payments import SimulatedCrash
+from app.services.session_flow import advance_turn
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -31,7 +33,10 @@ def create_session(member: Member = Depends(get_current_member), db: Session = D
 def get_session(session_id: int, member: Member = Depends(get_current_member), db: Session = Depends(get_db)):
     session = (
         db.query(ConversationSession)
-        .filter(ConversationSession.id == session_id, ConversationSession.member_id == member.id)
+        .filter(
+            ConversationSession.id == session_id,
+            ConversationSession.member_id == member.id,
+        )
         .first()
     )
     if not session:
@@ -48,20 +53,26 @@ def get_session(session_id: int, member: Member = Depends(get_current_member), d
 @router.post("/{session_id}/turn")
 def turn(
     session_id: int,
-    payload: dict,
+    payload: SessionTurnIn,
     member: Member = Depends(get_current_member),
     db: Session = Depends(get_db),
 ):
     session = (
         db.query(ConversationSession)
-        .filter(ConversationSession.id == session_id, ConversationSession.member_id == member.id)
+        .filter(
+            ConversationSession.id == session_id,
+            ConversationSession.member_id == member.id,
+        )
+        .with_for_update()
         .first()
     )
     if not session:
         raise HTTPException(status_code=404, detail="session not found")
 
-    intent = payload.get("intent")
     try:
-        return advance_turn(session, intent, payload, db)
+        return advance_turn(session, payload.intent, payload.model_dump(exclude_none=True), db)
     except SimulatedCrash:
-        raise HTTPException(status_code=500, detail="simulated crash after charge, before persistence")
+        db.rollback()
+        raise HTTPException(status_code=500, detail="simulated crash after charge, before finalization")
+    except PaymentTimeoutError:
+        raise HTTPException(status_code=504, detail="payment provider timed out; retry to reconcile")

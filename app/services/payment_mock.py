@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from threading import Lock
 
 from app.config import settings
 
@@ -15,17 +16,38 @@ class ChargeResult:
 
 class PaymentMockClient:
     def __init__(self) -> None:
-        # Every attempted charge, in order — a stand-in for the provider's own
-        # ledger, useful for proving a bug caused two real-world charges.
-        self.charge_log: list[int] = []
+        self._charges: dict[str, tuple[int, ChargeResult]] = {}
+        self._charge_log: list[int] = []
+        self._lock = Lock()
 
-    def charge(self, amount_cents: int) -> ChargeResult:
-        self.charge_log.append(amount_cents)
-        if amount_cents == settings.payment_timeout_trigger_cents:
+    def charge(self, amount_cents: int, *, idempotency_key: str) -> ChargeResult:
+        with self._lock:
+            saved = self._charges.get(idempotency_key)
+            created = saved is None
+            if saved is not None:
+                saved_amount, result = saved
+                if saved_amount != amount_cents:
+                    raise ValueError("idempotency key cannot be reused for a different charge")
+            else:
+                result = ChargeResult(status="succeeded" if amount_cents > 0 else "failed")
+                self._charges[idempotency_key] = (amount_cents, result)
+                self._charge_log.append(amount_cents)
+
+        # The mock keeps results for this process lifetime. A real provider
+        # must persist and honor these keys across process restarts.
+        if created and amount_cents == settings.payment_timeout_trigger_cents:
             raise PaymentTimeoutError("provider timed out")
-        if amount_cents <= 0:
-            return ChargeResult(status="failed")
-        return ChargeResult(status="succeeded")
+        return result
+
+    @property
+    def charge_log(self) -> list[int]:
+        with self._lock:
+            return list(self._charge_log)
+
+    def reset(self) -> None:
+        with self._lock:
+            self._charges.clear()
+            self._charge_log.clear()
 
 
 payment_mock_client = PaymentMockClient()

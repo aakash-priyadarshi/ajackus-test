@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.models import Club, Member
+from app.models import Booking, Club, Member
 
 client = TestClient(app)
 
@@ -12,13 +12,17 @@ def test_session_books_end_to_end(db):
     db.add(m)
     db.commit()
 
+    booking = Booking(member_id=m.id, club_id="riverside", description="Dinner quote", amount_cents=4000)
+    db.add(booking)
+    db.commit()
+
     resp = client.post("/sessions", headers={"X-Member-Token": "tok-a"})
     assert resp.status_code == 200
     session_id = resp.json()["session_id"]
 
     resp = client.post(
         f"/sessions/{session_id}/turn",
-        json={"intent": "book", "party_size": 2},
+        json={"intent": "book", "party_size": 2, "booking_id": booking.id},
         headers={"X-Member-Token": "tok-a"},
     )
     assert resp.json()["status"] == "awaiting_confirmation"
