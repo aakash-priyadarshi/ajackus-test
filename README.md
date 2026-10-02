@@ -8,7 +8,7 @@ Repository: https://github.com/aakash-priyadarshi/ajackus-test
 
 Template: https://github.com/ajackus/attachai-ai-ml-eng. The original template commit and subsequent implementation commits are preserved without squashing.
 
-**Screen recording link: TODO — paste the narrated recording URL here.**
+**Screen recording:** https://drive.google.com/file/d/1yD8SJteqFF8dcMxocZ9rE_j2UUSfR1n3/view?usp=sharing
 
 | Required item | Location |
 | --- | --- |
